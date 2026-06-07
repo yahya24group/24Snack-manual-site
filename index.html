@@ -57,8 +57,8 @@
 <script>
 (function () {
   "use strict";
-  var enc; // fetched payload
   var KEY_LS = "snack24_site_key_v1";
+  var encPromise = fetch("data.enc.json").then(function (r) { return r.json(); });
 
   function b64(s) { return Uint8Array.from(atob(s), function (c) { return c.charCodeAt(0); }); }
 
@@ -69,6 +69,7 @@
   }
 
   async function tryDecrypt(key) {
+    var enc = await encPromise;
     var pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(enc.iv) }, key, b64(enc.ct));
     return new TextDecoder().decode(pt);
   }
@@ -83,37 +84,37 @@
     document.body.appendChild(a);
   }
 
-  async function init() {
-    enc = await (await fetch("data.enc.json")).json();
-    // auto-unlock with remembered key
-    var saved = localStorage.getItem(KEY_LS);
-    if (saved) {
-      try {
-        var key = await crypto.subtle.importKey("raw", b64(saved), { name: "AES-GCM" }, true, ["decrypt"]);
-        boot(await tryDecrypt(key));
-        return;
-      } catch (e) { localStorage.removeItem(KEY_LS); }
-    }
-    var form = document.getElementById("gateForm");
-    form.addEventListener("submit", async function (ev) {
-      ev.preventDefault();
-      var btn = form.querySelector("button"); btn.disabled = true;
-      document.getElementById("gateErr").hidden = true;
-      try {
-        var key = await deriveKey(document.getElementById("gatePass").value, b64(enc.salt), enc.iter);
-        var dataJs = await tryDecrypt(key);
-        if (document.getElementById("gateRemember").checked) {
-          var raw = await crypto.subtle.exportKey("raw", key);
-          localStorage.setItem(KEY_LS, btoa(String.fromCharCode.apply(null, new Uint8Array(raw))));
-        }
-        boot(dataJs);
-      } catch (e) {
-        document.getElementById("gateErr").hidden = false;
-        btn.disabled = false;
+  // Attach the submit handler IMMEDIATELY (before the payload finishes downloading)
+  // so a fast submit never falls through to a native form reload.
+  var form = document.getElementById("gateForm");
+  form.addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    var btn = form.querySelector("button"); btn.disabled = true;
+    document.getElementById("gateErr").hidden = true;
+    try {
+      var enc = await encPromise;
+      var key = await deriveKey(document.getElementById("gatePass").value, b64(enc.salt), enc.iter);
+      var dataJs = await tryDecrypt(key);
+      if (document.getElementById("gateRemember").checked) {
+        var raw = await crypto.subtle.exportKey("raw", key);
+        localStorage.setItem(KEY_LS, btoa(String.fromCharCode.apply(null, new Uint8Array(raw))));
       }
-    });
-  }
-  init();
+      boot(dataJs);
+    } catch (e) {
+      document.getElementById("gateErr").hidden = false;
+      btn.disabled = false;
+    }
+  });
+
+  // auto-unlock with remembered key
+  (async function () {
+    var saved = localStorage.getItem(KEY_LS);
+    if (!saved) return;
+    try {
+      var key = await crypto.subtle.importKey("raw", b64(saved), { name: "AES-GCM" }, true, ["decrypt"]);
+      boot(await tryDecrypt(key));
+    } catch (e) { localStorage.removeItem(KEY_LS); }
+  })();
 })();
 </script>
 </body>
