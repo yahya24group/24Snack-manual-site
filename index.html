@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>24Snack Production Manual — دليل الإنتاج</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar no-print">
+  <div class="brand">
+    <span class="brand-mark">24</span>
+    <div class="brand-text">
+      <strong data-i18n="brandTitle">24Snack Production Manual</strong>
+      <small data-i18n="brandSub">Official Master Manual — v1.0</small>
+    </div>
+  </div>
+  <nav class="topnav">
+    <a href="#/" class="nav-link" data-i18n="navProducts">Products</a>
+    <a href="#/common" class="nav-link" data-i18n="navCommon">Hygiene &amp; Setup</a>
+    <a href="#/prices" class="nav-link" data-i18n="navPrices">Price Editor</a>
+  </nav>
+  <button id="langBtn" class="lang-btn" type="button">العربية</button>
+</header>
+
+<main id="app"></main>
+
+<footer class="footer no-print">
+  <p data-i18n="footNote">All nutrition values and costs are calculated from the ingredient database. Estimated recipes are marked and require an R&amp;D test batch before production.</p>
+</footer>
+
+
+<div id="gate">
+  <form id="gateForm" class="gate-card">
+    <div class="gate-brand"><span class="brand-mark">24</span></div>
+    <h1>24Snack Production Manual</h1>
+    <h2>دليل إنتاج 24Snack</h2>
+    <p>Enter the team passcode to open the manual.<br>أدخل رمز الفريق لفتح الدليل.</p>
+    <input id="gatePass" type="password" autocomplete="current-password" placeholder="Team passcode — رمز الفريق" required>
+    <label class="gate-remember"><input type="checkbox" id="gateRemember" checked> Remember on this device — تذكرني على هذا الجهاز</label>
+    <button type="submit">Open — فتح</button>
+    <p id="gateErr" class="gate-err" hidden>Wrong passcode — رمز غير صحيح</p>
+  </form>
+</div>
+<style>
+#gate { position: fixed; inset: 0; background: #1e1a16; display: grid; place-items: center; z-index: 999; }
+.gate-card { background: #faf7f2; border-radius: 16px; padding: 2.2rem 2.4rem; width: min(92vw, 420px); text-align: center; font-family: "Segoe UI", system-ui, sans-serif; }
+.gate-card h1 { margin: 0.8rem 0 0; font-size: 1.25rem; } .gate-card h2 { margin: 0 0 0.6rem; font-size: 1.05rem; color: #5d564e; }
+.gate-card p { color: #5d564e; font-size: 0.92rem; }
+.gate-brand .brand-mark { background: #e8590c; color: #fff; font-weight: 800; font-size: 1.4rem; width: 54px; height: 54px; display: inline-grid; place-items: center; border-radius: 12px; }
+#gatePass { width: 100%; padding: 0.7rem 0.9rem; border: 1.5px solid #e6dfd5; border-radius: 10px; font-size: 1.05rem; margin: 0.4rem 0 0.6rem; box-sizing: border-box; }
+.gate-remember { display: block; font-size: 0.85rem; color: #5d564e; margin-bottom: 0.9rem; }
+.gate-card button { width: 100%; background: #e8590c; color: #fff; border: 0; border-radius: 10px; padding: 0.75rem; font-size: 1.05rem; font-weight: 700; cursor: pointer; }
+.gate-card button:disabled { opacity: 0.6; }
+.gate-err { color: #b91c1c; font-weight: 700; }
+</style>
+<script>
+(function () {
+  "use strict";
+  var enc; // fetched payload
+  var KEY_LS = "snack24_site_key_v1";
+
+  function b64(s) { return Uint8Array.from(atob(s), function (c) { return c.charCodeAt(0); }); }
+
+  async function deriveKey(pass, salt, iter) {
+    var base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey({ name: "PBKDF2", salt: salt, iterations: iter, hash: "SHA-256" },
+      base, { name: "AES-GCM", length: 256 }, true, ["decrypt"]);
+  }
+
+  async function tryDecrypt(key) {
+    var pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(enc.iv) }, key, b64(enc.ct));
+    return new TextDecoder().decode(pt);
+  }
+
+  function boot(dataJs) {
+    var s = document.createElement("script");
+    s.textContent = dataJs;
+    document.body.appendChild(s);
+    var a = document.createElement("script");
+    a.src = "app.js";
+    a.onload = function () { document.getElementById("gate").remove(); };
+    document.body.appendChild(a);
+  }
+
+  async function init() {
+    enc = await (await fetch("data.enc.json")).json();
+    // auto-unlock with remembered key
+    var saved = localStorage.getItem(KEY_LS);
+    if (saved) {
+      try {
+        var key = await crypto.subtle.importKey("raw", b64(saved), { name: "AES-GCM" }, true, ["decrypt"]);
+        boot(await tryDecrypt(key));
+        return;
+      } catch (e) { localStorage.removeItem(KEY_LS); }
+    }
+    var form = document.getElementById("gateForm");
+    form.addEventListener("submit", async function (ev) {
+      ev.preventDefault();
+      var btn = form.querySelector("button"); btn.disabled = true;
+      document.getElementById("gateErr").hidden = true;
+      try {
+        var key = await deriveKey(document.getElementById("gatePass").value, b64(enc.salt), enc.iter);
+        var dataJs = await tryDecrypt(key);
+        if (document.getElementById("gateRemember").checked) {
+          var raw = await crypto.subtle.exportKey("raw", key);
+          localStorage.setItem(KEY_LS, btoa(String.fromCharCode.apply(null, new Uint8Array(raw))));
+        }
+        boot(dataJs);
+      } catch (e) {
+        document.getElementById("gateErr").hidden = false;
+        btn.disabled = false;
+      }
+    });
+  }
+  init();
+})();
+</script>
+</body>
+</html>
